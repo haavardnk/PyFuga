@@ -5,101 +5,37 @@ import pytest
 import matplotlib.pyplot as plt
 import numpy as np
 import numpy.testing as npt
-from pyfuga.constants import UVW_LT
-from pyfuga.file_readers import read_lut_file
-from pyfuga.lut import FourierLUTGenerator
 from pyfuga.preluts import PreLUT, PreLUTs
-from pyfuga.preluts_generator import PrelutNode
 from pyfuga.tests.test_files import tfp
-from pyfuga.utils import get_beta, get_beta_lst, get_kz0_lst, compile
+from pyfuga.utils import get_beta, get_beta_lst, get_kz0_lst, ComplexXRDataset, compile
+from pyfuga.lut import FourierLUTGenerator
+from pyfuga.file_readers import read_lut_file
+from pyfuga.constants import UVW_LT
+from pyfuga import utils
+from pyfuga.preluts_generator import PrelutNode, PreLUTGenerator
+from pyfuga.profiling import timeit
+import xarray as xr
+import warnings
+import time
 
 
 def setup_module(module):
     """ setup any state specific to the execution of the given module."""
+    compile(jit=True)
+
+
+def teardown_module(module):
     compile(jit=False)
-
-
-def test_get_beta_lst():
-    ref = PreLUTs.from_netcdf(tfp + 'preLUTs_Zeta0=0.00E+00_2_5.nc')
-    npt.assert_allclose(get_beta_lst(nbeta=5), ref.beta)
-
-
-def test_get_kz0_lst():
-    ref = PreLUTs.from_netcdf(tfp + 'preLUTs_Zeta0=0.00E+00_2_5.nc')
-    npt.assert_allclose(get_kz0_lst(nkz0=2), ref.kz0)
-
-
-def test_load_prelut_file():
-
-    prelut = PreLUT.from_pre_file(tfp + 'preLUTs_Zeta0=0.00E+00_2_5/0.0000-09.0000.pre',
-                                  zeta0=0, beta=0, kz0=0, kzmax=0, ds=0.05)
-
-    npt.assert_array_almost_equal(prelut.Yleft[7][0, 3], -0.330350424728106 + 9.114133411353441e-012j, 10)
-    npt.assert_array_almost_equal(prelut.Rleft[7][0, 3], -4.045634236057177e-002 - 1.325470800079699e-010j, 10)
-    npt.assert_array_almost_equal(prelut.Rright[7][0, 3], 3.768307078547423e-002 + 1.581796253544902e-010, 9)
-    npt.assert_array_almost_equal(prelut.dyxu0[7][1], -2.423313312692920e-011 - 1.267852505176752e-021j, 10)
-    npt.assert_array_almost_equal(prelut.dyxu1[7][1], -3.528960438325056e-020 - 1.849660676125115e-030j, 10)
-    npt.assert_array_almost_equal(prelut.dyxv0[7][3], 6.806655201915466e-011 - 7.883109477872014e-021, 10)
-    npt.assert_array_almost_equal(prelut.dyxv1[7][3], 9.905991452339835e-020 - 1.147145744025741e-029, 10)
-    npt.assert_array_almost_equal(prelut.dyxw0[7][2], 1.999045719443342e-030 - 2.122488476172560e-021, 10)
-    npt.assert_array_almost_equal(prelut.dyxw1[7][2], 2.912345039036901e-039 - 3.093036809788905e-030, 10)
-    npt.assert_array_almost_equal(prelut.dyxw0[7][2], 1.999045719443342e-030 - 2.122488476172560e-021, 10)
-    npt.assert_array_almost_equal(prelut.sleft[7], 0.35, 10)
-    npt.assert_array_almost_equal(prelut.sright[7], 0.4, 10)
-    npt.assert_array_almost_equal(prelut.level[7], 7, 10)
-
-
-def test_load_prelut_file_via_read_prelut_list():
-
-    prelut = PreLUT.from_pre_file(tfp + 'preLUTs_Zeta0=0.00E+00_2_5/0.3333-07.0000.pre', zeta0=0)
-    assert prelut.zeta0 == 0
-    assert prelut.beta.item() == 0.829727913835271
-    assert prelut.kz0 == 1e-7
-    assert prelut.kzmax == 300
-    assert prelut.ds == 0.05
-
-
-def compare(res, ref, atol=1e-13, rtol=1e-9):
-    npt.assert_array_equal(res.level, ref.level)
-    for k in ref:
-        # print(k)
-        max_dims = ('j', 'k')[:len(ref[k].shape) - 1]
-        max_idx = (0, 1, 2)[1:len(ref[k].shape)]
-        try:
-            npt.assert_allclose(res[k], ref[k], atol=atol, rtol=rtol, err_msg=k)
-        except AssertionError:
-            err = (ref[k] - res[k])
-
-            rerr_real = np.where(np.abs(ref[k].real) > 1e-15, err.real / ref[k].real, np.nan)
-            rerr_imag = np.where(np.abs(ref[k].imag) > 1e-15, err.imag / ref[k].imag, np.nan)
-            ax1, ax2 = plt.subplots(2, 1)[1]
-            plt.title(k)
-            ax1.plot(np.abs(err.real).max(max_dims).values, label='Real, abs')
-            ax2.plot(np.nanmax(np.abs(rerr_real), max_idx), label='Real, rel')
-            # ax1.set_xlim([360, 375])
-
-            ax1.plot(np.abs(err.imag).max(max_dims).values, label='Imag, abs')
-            ax2.plot(np.nanmax(np.abs(rerr_imag), max_idx), label='Imag, rel')
-            # ax1.set_xlim([360, 375])
-
-            ax1.legend()
-            ax2.legend()
-            plt.ylabel = 'Error'
-            plt.xlabel = 'Node'
-            plt.show()
-            raise
 
 
 def test_prelut_neutral_all_vars():
     preluts = PreLUTs.make_preluts(zeta0=0, kz0_lst=[1e-9, 1e-8], beta_lst=get_beta_lst(1),
-                                   kzmax=300, ds=0.05, accgoal=0.00001, jit=False, verbose=False)
+                                   kzmax=300, ds=0.05, accgoal=0.00001, verbose=False)
     ref_prelut = PreLUT.from_pre_file(tfp + f'preLUTs_Zeta0=0.00E+00_2_5/0.0000-09.0000.pre', zeta0=0)
 
     assert ref_prelut.ds == preluts.ds
     assert ref_prelut.kzmax == preluts.kzmax
     # assert ref_prelut.accgoal == preluts.accgoal
-
-    # compare(res, prelut)
 
     flut = FourierLUTGenerator(preluts, zhub=70, diameter=80, zi=400, verbose=False).make_lut(
         z0=0.00001, low_level_out=315, high_level_out=315)
@@ -117,14 +53,12 @@ def test_prelut_neutral_all_vars():
 @pytest.mark.parametrize('zeta0', [-1, 1])
 def test_prelut_stable_and_unstable(zeta0):
     preluts = PreLUTs.make_preluts(zeta0=zeta0, kz0_lst=[1e-9], beta_lst=[0],
-                                   kzmax=300, ds=0.05, accgoal=0.0001, jit=False, verbose=False)
+                                   kzmax=300, ds=0.05, accgoal=0.0001, verbose=False)
     ref_prelut = PreLUT.from_pre_file(tfp + f'preLUTs_Zeta0={zeta0}.00E+00_1_2/0.0000-09.0000.pre', zeta0=zeta0)
 
     assert ref_prelut.ds == preluts.ds
     assert ref_prelut.kzmax == preluts.kzmax
     assert ref_prelut.accgoal == preluts.accgoal
-
-    # compare(res, prelut)
 
     flut = FourierLUTGenerator(preluts, zhub=70, diameter=80, zi=400, verbose=False).make_hubheight_luts(
         z0=0.00001, luts=['UL'])
@@ -155,7 +89,7 @@ def test_prelut_with_above_sm():
     # prelut = PreLUT.from_pre_file(tfp + 'preLUTs_Zeta0=0.00E+00_2_5/0.0000-07.0000.pre',
     #                               zeta0=0, beta=0, kz0=1e-7, kzmax=0, ds=0.05)
     preluts = PreLUTs.make_preluts(zeta0=0, kz0_lst=[1e-7], beta_lst=get_beta(np.array([0]))[:1],
-                                   kzmax=300, ds=0.05, accgoal=0.00001, jit=False, verbose=False)
+                                   kzmax=300, ds=0.05, accgoal=0.00001, verbose=False)
     flut = FourierLUTGenerator(preluts, zhub=70, diameter=80, zi=400, verbose=False
                                ).make_hubheight_luts(z0=0.00001, luts=['UL'])
     ref = read_lut_file(tfp + f'D080.0000_zH070.0000_1_2_9999/Z0=0.00001000Zi=00400Zeta0=0.00E+00/UL9999.lut',
@@ -166,25 +100,13 @@ def test_prelut_with_above_sm():
 
 def test_prelut_with_substations():
     preluts = PreLUTs.make_preluts(zeta0=0, kz0_lst=[1e-6], beta_lst=get_beta(np.array([0]))[:1],
-                                   kzmax=300, ds=0.05, accgoal=0.0001, jit=False, verbose=False)
+                                   kzmax=300, ds=0.05, accgoal=0.0001, verbose=False)
     flut = FourierLUTGenerator(preluts, zhub=70, diameter=80, zi=400, verbose=False
                                ).make_hubheight_luts(z0=0.00001, luts=['UL'])
     ref = read_lut_file(tfp + f'D080.0000_zH070.0000_1_2_9999/Z0=0.00001000Zi=00400Zeta0=0.00E+00/UL9999.lut',
                         prelut_folder=tfp + f'preLUTs_Zeta0=0.00E+00_1_2')
 
     npt.assert_array_almost_equal(ref.sel(kz0=1e-6, beta=0).UL, flut.UL.item())
-
-
-def test_prelut_save_load():
-
-    if os.path.isfile('tmp.nc'):
-        os.remove('tmp.nc')
-    ref = PreLUT.make_prelut(zeta0=0, kz0=1e-9, beta=get_beta(np.array([0]))[0],
-                             kzmax=300, ds=0.05, accgoal=0.0001)
-    ref.save('tmp.nc')
-
-    res = PreLUT.from_netcdf('tmp.nc')
-    compare(res, ref)
 
 
 def test_preluts():
@@ -221,7 +143,7 @@ def test_preluts_from_pre_files():
 def test_make_preluts():
     preluts_ref = PreLUTs.from_netcdf(tfp + 'preLUTs_Zeta0=0.00E+00_1_2.nc')
     preluts = PreLUTs.make_preluts(zeta0=0, kz0_lst=[1e-9, 1e-8], beta_lst=preluts_ref.beta[:2].values,
-                                   kzmax=0.0000001, ds=0.05, accgoal=0.0001, jit=False, verbose=False)
+                                   kzmax=0.0000001, ds=0.05, accgoal=0.0001, verbose=False)
     prelut = preluts.isel(beta=1, kz0=1, i=7)
 
     npt.assert_array_almost_equal(prelut.Yleft[0, 3], -3.818665046221538e-002 - 4.092601925385363e-011j, 10)
@@ -233,3 +155,62 @@ def test_make_preluts():
     npt.assert_array_equal(prelut.sleft, 0.35)
     npt.assert_array_almost_equal(prelut.sright, 0.4, 15)
     npt.assert_array_equal(prelut.level, 7)
+
+
+def test_make_preluts_jit():
+
+    kwargs = dict(zeta0=0, kz0=1e-1, beta=0, kzmax=300, ds=0.05, accgoal=0.0001)
+    if 1:  # not os.path.isfile('flut1.nc'):
+        utils.compile(jit=False)
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', category=DeprecationWarning)
+            from pyfuga import preluts_generator_nojit
+        r1, t1 = timeit(preluts_generator_nojit.PreLUTGenerator(**kwargs).make_prelut, min_runs=1)()
+        r1 = xr.merge([ds.assign_coords(i=ds.i, kz0=ds.kz0, beta=ds.beta).expand_dims(('kz0', 'beta'))
+                       for ds in [r1]])
+        flut1 = FourierLUTGenerator(r1, zhub=70, diameter=80, zi=400, verbose=False).make_lut(z0=0.1,
+                                                                                              low_level_out=47,
+                                                                                              high_level_out=165)
+        flut1.to_netcdf('flut1.nc')
+    else:
+        flut1 = ComplexXRDataset.from_netcdf('flut1.nc')
+
+    utils.compile(jit=True)
+    r2, t2 = timeit(PreLUTGenerator(**kwargs).make_prelut, min_runs=2)()
+
+    # timeit(PreLUTGenerator(**kwargs).make_prelut, verbose=1, line_profile=True, profile_funcs=[
+    #     PreLUTGenerator.make_prelut,
+    # ])()
+
+    r2 = xr.merge([ds.assign_coords(i=ds.i, kz0=ds.kz0, beta=ds.beta).expand_dims(('kz0', 'beta'))
+                   for ds in [r2]])
+    flut2 = FourierLUTGenerator(r2, zhub=70, diameter=80, zi=400, verbose=False).make_lut(z0=0.1,
+                                                                                          low_level_out=47,
+                                                                                          high_level_out=165)
+
+    assert t2 < t1
+    for k in flut1:
+        # print(k, flut1[k].shape)
+        npt.assert_array_almost_equal(flut1[k], flut2[k], 10)
+
+
+def test_compile():
+    # second compile should be fast
+    t = time.time()
+    utils.compile(True)
+    assert time.time() - t < .01
+
+
+def test_make_preluts_jit_parallel():
+
+    # r1, t1 = timeit(PreLUTs.make_preluts)(zeta0=0, kz0_lst=get_kz0_lst(1, 1e-9, 1e-1), beta_lst=get_beta_lst(1),
+    #                                       kzmax=300, ds=0.05, accgoal=0.0001)
+    # print(t1)
+    # utils.compile(jit=True)
+    # r2, t2 = timeit(PreLUTs.make_preluts)(zeta0=0, kz0_lst=get_kz0_lst(1, 1e-9, 1e-1), beta_lst=get_beta_lst(1),
+    #                                       kzmax=300, ds=0.05, accgoal=0.0001)
+    # print(t2)
+
+    r3, t3 = timeit(PreLUTs.make_preluts)(zeta0=0, kz0_lst=get_kz0_lst(1, 1e-9, 1e-1), beta_lst=get_beta_lst(1),
+                                          kzmax=300, ds=0.05, accgoal=0.0001, n_cpu=None)
+    print(t3)
